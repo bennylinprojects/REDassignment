@@ -88,6 +88,14 @@ class LCA(object):
         for node in t.traverse():
             node.add_features(_pass=True)
         for leaf in t:
+            if "min_lin_depth" in keyword_parameters and keyword_parameters["min_lin_depth"] > 0:
+                if LCA.rank_assessment(leaf.lineage) < keyword_parameters["min_lin_depth"]:
+                    # print("Too short:", leaf.lineage)
+                    leaf.add_features(_pass=False)
+            # TODO: Use the new 'remove_strings' argument, controlled by args.remove to remove all unwanted lineages
+            if "remove_strings" in keyword_parameters and len(keyword_parameters["remove_strings"]) > 0:
+                print(keyword_parameters["remove_strings"])
+            # TODO: Remove all of these obsolete filters
             if 'r1leaves' in keyword_parameters:
                 if keyword_parameters['r1leaves']:
                     if LCA.rank_assessment(leaf.lineage) == 1:
@@ -111,6 +119,7 @@ class LCA(object):
             if 'miscellaneous' in keyword_parameters:
                 if leaf in LCA.list_leaves_at_rank(t, 'miscellaneous', keyword_parameters['miscellaneous']):
                     leaf.add_features(_pass=False)
+        return
 
     @staticmethod
     def get_leaf_linages_passed(node):
@@ -300,26 +309,33 @@ def graph_red_vs_rank(t):
     return plt.show()
 
 
-parser = argparse.ArgumentParser(description='Calculate average distance of taxonomic rank of a tree to the root')
-parser.add_argument('-id', '--id_directory', type=str, metavar='', required=True, help='taxonomic IDs of a tree file')
-parser.add_argument('-td', '--tree_directory', type=str, metavar='', required=True, help='tree file of interest')
-parser.add_argument('-rmeta', '--r_metagenome', type=int, metavar='', required=True, help='removed at given rank')
-parser.add_argument('-runc', '--r_unclassified', type=int, metavar='', required=True, help='removed at given rank')
-parser.add_argument('-rcand', '--r_candidatus', type=int, metavar='', required=True, help='removed at given rank')
-parser.add_argument('-res', '--r_environmental', type=int, metavar='', required=True, help='removed at given rank')
-parser.add_argument('-l2', '--leaf2', type=bool, metavar='', required=True, help='removes leaves with rank level 2')
-args = parser.parse_args()
+def get_arguments():
+    parser = argparse.ArgumentParser(description='Calculate average distance of taxonomic rank of a tree to the root')
+    parser.add_argument('-i', '--tax_ids',
+                        type=str, metavar='', required=True,
+                        help="taxonomic IDs of a tree file")
+    parser.add_argument('-t', '--tree',
+                        type=str, metavar='', required=True,
+                        help="tree file of interest")
+    parser.add_argument('-r', '--remove',
+                        type=str, metavar='', required=False, nargs='+', default="",
+                        help="Remove lineages with strings "
+                             "(e.g. metagenome, unclassified, candidatus, environmental) at given rank")
+    parser.add_argument('-l', '--lineage_len',
+                        type=int, metavar='', required=False, default=2,
+                        help="The minimum taxonomic lineage resolution/depth (Kingdom = 1, Phylum = 2, etc.). "
+                             "Removes leaves with a truncated lineage at this depth [ DEFAULT = 2 ]")
+    args = parser.parse_args()
+    return args
+
 
 if __name__ == '__main__':
-    t = open_tree_file(args.id_directory, args.tree_directory)
+    args = get_arguments()
+    t = open_tree_file(args.tax_ids, args.tree)
     RED.apply_all(t)
     Map.class_all_nodes(t,
-                        r1leaves=True,
-                        r2leaves=args.leaf2,
-                        metagenome=args.r_metagenome,
-                        unclassified=args.r_unclassified,
-                        candidatus=args.r_candidatus,
-                        environmental_samples=args.r_environmental,
+                        min_lin_depth=args.lineage_len,
+                        remove_strings=args.remove,
                         miscellaneous=8)
     Map.label_nodes(t)
     graph_red_vs_rank(t)
