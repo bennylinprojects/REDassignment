@@ -2,9 +2,33 @@ import matplotlib.pyplot as plt
 import numpy as np
 import argparse
 import statistics as stat
+import re
 
 from ete3 import Tree
 from typing import List
+
+
+def clean_lineage_string(lineage: str):
+    """
+    Removes superfluous taxonomic ranks and characters that make lineage comparisons difficult
+
+    :param lineage: A taxonomic lineage string where each rank is separated by a semi-colon
+    :return: String with the purified taxonomic lineage adhering to the NCBI hierarchy
+    """
+    non_standard_names_re = re.compile(" group| cluster| complex", re.IGNORECASE)
+    bad_strings = ["cellular organisms; ", "delta/epsilon subdivisions; ", "\(miscellaneous\)", "[a-p]__"]
+    for bs in bad_strings:
+        lineage = re.sub(bs, '', lineage)
+    # filter 'group' and 'cluster'
+    if non_standard_names_re.search(lineage):
+        reconstructed_lineage = ""
+        ranks = lineage.split("; ")
+        for rank in ranks:
+            if not non_standard_names_re.search(rank):
+                reconstructed_lineage = reconstructed_lineage + str(rank) + '; '
+        reconstructed_lineage = re.sub('; $', '', reconstructed_lineage)
+        lineage = reconstructed_lineage
+    return lineage
 
 
 # Opening Tree and ID Files
@@ -22,8 +46,9 @@ def open_tree_file(taxa_table_file: str, newick_file: str):
     tree_num_to_lineage_map = {}
     for line in tax_ids_handler:
         tree_id, desc, lineage = line.split('\t')
-        tax = lineage.rstrip().split('; ')
-        tree_num_to_lineage_map[tree_id] = tax
+        cleaned_lineage = clean_lineage_string(lineage.rstrip())
+        tax_path = cleaned_lineage.split('; ')
+        tree_num_to_lineage_map[tree_id] = tax_path
     tax_ids_handler.close()
 
     tree_handler = open(newick_file)
@@ -75,7 +100,7 @@ class Dist(object):
 
 # Functions for getting LCA from leaf node info
 class LCA(object):
-
+    skip_taxa = ["cellular organisms"]
     @staticmethod
     def get_lca_lineage(node):
         """
@@ -89,8 +114,7 @@ class LCA(object):
             node.add_features(_pass=True)
         for leaf in t:
             if "min_lin_depth" in keyword_parameters and keyword_parameters["min_lin_depth"] > 0:
-                if LCA.rank_assessment(leaf.lineage) < keyword_parameters["min_lin_depth"]:
-                    # print("Too short:", leaf.lineage)
+                if LCA.lineage_length(leaf.lineage) < keyword_parameters["min_lin_depth"]:
                     leaf.add_features(_pass=False)
             # TODO: Use the new 'remove_strings' argument, controlled by args.remove to remove all unwanted lineages
             if "remove_strings" in keyword_parameters and len(keyword_parameters["remove_strings"]) > 0:
@@ -98,10 +122,10 @@ class LCA(object):
             # TODO: Remove all of these obsolete filters
             if 'r1leaves' in keyword_parameters:
                 if keyword_parameters['r1leaves']:
-                    if LCA.rank_assessment(leaf.lineage) == 1:
+                    if LCA.lineage_length(leaf.lineage) == 1:
                         leaf.add_features(_pass=False)
             if 'r2leaves' in keyword_parameters:
-                if LCA.rank_assessment(leaf.lineage) == 2:
+                if LCA.lineage_length(leaf.lineage) == 2:
                     if keyword_parameters['r2leaves']:
                         leaf.add_features(_pass=False)
             if 'metagenome' in keyword_parameters:
@@ -141,29 +165,25 @@ class LCA(object):
         """
         l = []
         for node in t.get_leaves():
-            if LCA.rank_assessment(node.lineage) <= rank:
+            if LCA.lineage_length(node.lineage) <= rank:
                 for tax in node.lineage:
                     if cls in tax:
                         l.append(node)
         return l
 
     @staticmethod
-    def rank_assessment(l):
+    def lineage_length(lineage_list) -> int:
         """
-        assesses rank [1:8] where 1 being cellular organism, 2 being domain... 8 being species
+        assesses rank [1:8] where 1 is the domain/kingdom, 2 is the phylum... 7 being species
         """
-        ni = 0
-        if l is None or l == [] or l == 'None':  # Is the last condition necessary?
-            return None
+        if lineage_list is None or lineage_list == [] or lineage_list == 'None':  # Is the last condition necessary?
+            return 0
         else:
-            for tax in l:
-                if 'group' in tax or 'cluster' in tax:
-                    ni = ni + 1
-            rank = len(l) - ni
-            if rank > 8:
-                return 8
-            else:
-                return rank
+            d = 0
+            for taxon in lineage_list:
+                if taxon not in LCA.skip_taxa:
+                    d += 1
+            return d
 
     @staticmethod
     def get_commons_from_mult_lists(l):
@@ -256,7 +276,7 @@ class Map(object):
         for node in t.traverse():
             try:
                 if not node.lineage is None:
-                    node.add_features(rank=LCA.rank_assessment(node.lineage))
+                    node.add_features(rank=LCA.lineage_length(node.lineage))
                 else:
                     node.add_features(rank=None)
             except AttributeError:
@@ -312,14 +332,14 @@ def graph_red_vs_rank(t):
 def get_arguments():
     parser = argparse.ArgumentParser(description='Calculate average distance of taxonomic rank of a tree to the root')
     parser.add_argument('-i', '--tax_ids',
-                        type=str, metavar='', required=True,
-                        help="taxonomic IDs of a tree file")
+                        type=str, metavar='tax_ids.txt', required=True,
+                        help="Taxonomic IDs of a tree file")
     parser.add_argument('-t', '--tree',
-                        type=str, metavar='', required=True,
-                        help="tree file of interest")
+                        type=str, metavar='tree.txt', required=True,
+                        help="Tree file of interest, in Newick format")
     parser.add_argument('-r', '--remove',
                         type=str, metavar='', required=False, nargs='+', default="",
-                        help="Remove lineages with strings "
+                        help="Remove lineages containing specific strings "
                              "(e.g. metagenome, unclassified, candidatus, environmental) at given rank")
     parser.add_argument('-l', '--lineage_len',
                         type=int, metavar='', required=False, default=2,
