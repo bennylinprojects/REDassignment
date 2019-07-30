@@ -3,6 +3,7 @@ import numpy as np
 import argparse
 import statistics as stat
 import re
+import sys
 import pandas as pd
 
 from ete3 import Tree
@@ -100,11 +101,11 @@ class Dist(object):
         """
         from this node, get list of distances from child leaves
         """
-        l = []
+        distances = []
         for n in node.get_leaves():
             if n._pass:
-                l.append(n.get_distance(node))
-        return l
+                distances.append(n.get_distance(node))
+        return distances
 
 
 # Functions for getting LCA from leaf node info
@@ -173,11 +174,13 @@ class LCA(object):
             return d
 
     @staticmethod
-    def get_commons_from_mult_lists(l):
+    def get_commons_from_mult_lists(l: list):
         """
         returns a list of common elements from multiple strings
         """
-        if l != [] or l is None:
+        if l is None:
+            return []
+        elif type(l) is list and len(l) > 0:
             c = l[0]
             for num in range(1, (len(l))):
                 c = LCA.get_commons_from_2_list(c, l[num])
@@ -220,7 +223,7 @@ class RED(object):
     @staticmethod
     def get_red(node):
         """gets the RED value associated with this node given parent has RED value"""
-        if Dist.avg_dist_to_this_node(node) == None:
+        if Dist.avg_dist_to_this_node(node) is None:
             return None
         else:
             a = node.get_distance(node.up)
@@ -329,13 +332,13 @@ def cull_outliers(data: list, dev=3):
 
 
 def list_nodes_of_rank(t, rank):
-    '''
+    """
     Generates a list of nodes of a given rank integer.
 
     :param t: tree
     :param rank: integer, range[1:7]
     :return: list
-    '''
+    """
     nodes_of_rank = []
     for node in t.iter_descendants():
         if node.rank == rank:
@@ -344,13 +347,13 @@ def list_nodes_of_rank(t, rank):
 
 
 def dict_of_nodes_of_rank(t, rank):
-    '''
+    """
     Generates dictionary of nodes included in a rank integer. RED values and Ranks
     become the value of their respective key (node) in namedtuple format: RedRank(RED, rank).
     :param t: tree
     :param rank: int
     :return: dictionary
-    '''
+    """
     nodes_of_rank = list_nodes_of_rank(t, rank)
     dict = {}
     for node in nodes_of_rank:
@@ -363,13 +366,13 @@ def dict_of_nodes_of_rank(t, rank):
 
 
 def list_inliers_outliers(nodes: dict):
-    '''
+    """
     Returns dictionaries of inlier nodes, lower outlier nodes, upper outlier nodes from
     a dictionary of nodes (here we use the inputs as dictionaries of nodes from a single rank)
 
     :param nodes: dictionary
     :return: three dictionaries
-    '''
+    """
     reds = []
     for RR in nodes.values():
         reds.append(RR.red)
@@ -392,7 +395,7 @@ def list_inliers_outliers(nodes: dict):
 
 
 def get_full_inliers_and_outliers(t, r1, r2):
-    '''
+    """
     Returns two dictionaries of nodes that are either inliers or outliers relative to the
     red values of nodes in the same rank.
 
@@ -400,7 +403,7 @@ def get_full_inliers_and_outliers(t, r1, r2):
     :param r1: int, bottom rank range to include
     :param r2: int, upper rank range to include
     :return: two dictionaries of nodes as keys, RedRank(red, rank) as values
-    '''
+    """
     full_outliers = {}
     full_inliers = {}
     for num in range(r1, r2+1):
@@ -417,7 +420,7 @@ def get_full_inliers_and_outliers(t, r1, r2):
 
 # Graphing Model
 def model_graph(t, model_type):
-    '''
+    """
     Graphically fits a model using the ML to processed dataset of a tree. Model types include
     linear (linear regression), logistic (logistic regression), and forest (randome forest
     classifier).
@@ -425,20 +428,20 @@ def model_graph(t, model_type):
     :param t: tree
     :param model_type: str
     :return: matplotlib graph
-    '''
+    """
     inliers, outliers = get_full_inliers_and_outliers(t, 1, 7)
     reds = []
     ranks = []
     for node in inliers:
         reds.append(inliers[node].red)
         ranks.append(inliers[node].rank)
-    X_train, X_test, y_train, y_test = train_test_split(np.array(reds).reshape(-1, 1), ranks, test_size=0.25)
+    x_train, x_test, y_train, y_test = train_test_split(np.array(reds).reshape(-1, 1), ranks, test_size=0.25)
 
-    if model_type == 'forest' or model_type == 'Forest':
+    if model_type == 'random_forest':
         model = RandomForestClassifier(class_weight='balanced', min_weight_fraction_leaf=0.25, n_estimators=100)
-        fit = model.fit(X_train, y_train)
-        model.score(X_test, y_test)
-        score = model.score(X_test, y_test)
+        fit = model.fit(x_train, y_train)
+        model.score(x_test, y_test)
+        score = model.score(x_test, y_test)
         lex = []
         ley = []
         for num in range(0, 100):
@@ -447,11 +450,11 @@ def model_graph(t, model_type):
         plt.plot(lex, ley, 'b-')
         print('model score = ' + str(score))
 
-    elif model_type == 'linear' or model_type == 'Linear':
+    elif model_type == 'linear':
         model = LinearRegression()
-        fit = model.fit(X_train, y_train)
-        model.score(X_test, y_test)
-        score = model.score(X_test, y_test)
+        fit = model.fit(x_train, y_train)
+        model.score(x_test, y_test)
+        score = model.score(x_test, y_test)
         lex = []
         ley = []
         for num in range(0, 100):
@@ -460,11 +463,11 @@ def model_graph(t, model_type):
         plt.plot(lex, ley, 'b-')
         print('model score = ' + str(score))
 
-    elif model_type == 'logistic' or model_type == 'Logistic':
+    elif model_type == 'logistic':
         model = LogisticRegression(multi_class='multinomial', solver='lbfgs', class_weight='balanced')
-        fit = model.fit(X_train, y_train)
-        model.score(X_test, y_test)
-        score = model.score(X_test, y_test)
+        fit = model.fit(x_train, y_train)
+        model.score(x_test, y_test)
+        score = model.score(x_test, y_test)
         lex = []
         ley = []
         for num in range(0, 100):
@@ -472,6 +475,9 @@ def model_graph(t, model_type):
             ley.append(fit.predict(np.array(num / 100).reshape(-1, 1))[0])
         plt.plot(lex, ley, 'b-')
         print('model score = ' + str(score))
+    else:
+        print("ERROR: Unknown model type '" + str(model_type) + "'.")
+        sys.exit(3)
     model_score = str(score)
     plt.text(x=0.1, y=6.5, s=0, text='model score = ' + model_score)
     return plt.show()
@@ -512,8 +518,9 @@ def get_arguments():
                         type=str, metavar='tree.txt', required=True,
                         help="Tree file of interest, in Newick format")
     parser.add_argument('-m', '--model',
-                        type=str, metavar='', required=True,
-                        help="Model to Fit")
+                        type=str, metavar='', required=False, default="linear",
+                        choices=["linear", "logistic", "random_forest"],
+                        help="Model to fit to the RED distances across taxonomic ranks [ DEFAULT = linear ]")
     parser.add_argument('-r', '--remove',
                         type=str, metavar='', required=False, nargs='+', default="",
                         help="Remove lineages containing specific strings "
