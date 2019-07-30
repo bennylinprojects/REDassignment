@@ -4,7 +4,6 @@ import argparse
 import statistics as stat
 import re
 import sys
-import pandas as pd
 
 from ete3 import Tree
 from typing import List
@@ -164,7 +163,7 @@ class LCA(object):
         """
         assesses rank [1:8] where 1 is the domain/kingdom, 2 is the phylum... 7 being species
         """
-        if lineage_list is None or lineage_list == []:  # Is the last condition necessary?
+        if lineage_list is None:
             return 0
         else:
             d = 0
@@ -210,9 +209,6 @@ class RED(object):
                 RED.label_red(node)
             elif node.is_leaf():
                 node.add_features(red=1)
-        for leaf in t:
-            if LCA.lineage_length(leaf.lineage) >= 7:
-                leaf.add_features(red=0.9999)
         return t
 
     @staticmethod
@@ -324,11 +320,16 @@ def cull_outliers(data: list, dev=3):
     mdev = np.median(d)
     s = d / mdev if mdev else 0
     noo_a = noo_a[s < dev]
+    try:
+        if isinstance(noo_a[0], np.ndarray):
+            return list(noo_a[0])
+        else:
+            return list(noo_a)
+    except IndexError:
+        return []
 
-    if isinstance(noo_a[0], np.ndarray):
-        return list(noo_a[0])
-    else:
-        return list(noo_a)
+
+
 
 
 def list_nodes_of_rank(t, rank):
@@ -542,4 +543,3 @@ if __name__ == '__main__':
     RED.apply_all(t)
     Map.label_nodes(t)
     graph_red_vs_rank(t, args.model)
-
