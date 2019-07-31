@@ -13,6 +13,7 @@ from sklearn.linear_model import LogisticRegression, LinearRegression
 from sklearn.ensemble import RandomForestClassifier
 
 
+
 def clean_lineage_string(lineage: str):
     """
     Removes superfluous taxonomic ranks and characters that make lineage comparisons difficult
@@ -71,8 +72,8 @@ def open_tree_file(taxa_table_file: str, newick_file: str):
         if node.is_leaf() and 'cellular organisms' not in node.lineage:
             new_lin = ['cellular organisms'] + node.lineage
             node.add_features(lineage=new_lin)
-        node.add_features(_pass=True)
 
+        node.add_features(_pass=True)
     return t
 
 
@@ -101,6 +102,7 @@ class Dist(object):
         from this node, get list of distances from child leaves
         """
         distances = []
+
         for n in node.get_leaves():
             if n._pass:
                 distances.append(n.get_distance(node))
@@ -329,9 +331,6 @@ def cull_outliers(data: list, dev=3):
         return []
 
 
-
-
-
 def list_nodes_of_rank(t, rank):
     """
     Generates a list of nodes of a given rank integer.
@@ -493,6 +492,7 @@ def graph_red_vs_rank(t, model_type):
     for node in inliers:
         reds.append(inliers[node].red)
         ranks.append(inliers[node].rank)
+
     plt.xlabel('RED')
     plt.ylabel('Rank')
     plt.title('RED Assignment')
@@ -518,6 +518,7 @@ def get_arguments():
     parser.add_argument('-t', '--tree',
                         type=str, metavar='tree.txt', required=True,
                         help="Tree file of interest, in Newick format")
+
     parser.add_argument('-m', '--model',
                         type=str, metavar='', required=False, default="linear",
                         choices=["linear", "logistic", "random_forest"],
