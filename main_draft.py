@@ -3,9 +3,15 @@ import numpy as np
 import argparse
 import statistics as stat
 import re
+import sys
 
 from ete3 import Tree
 from typing import List
+from collections import namedtuple
+from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LogisticRegression, LinearRegression
+from sklearn.ensemble import RandomForestClassifier
+
 
 
 def clean_lineage_string(lineage: str):
@@ -66,36 +72,41 @@ def open_tree_file(taxa_table_file: str, newick_file: str):
         if node.is_leaf() and 'cellular organisms' not in node.lineage:
             new_lin = ['cellular organisms'] + node.lineage
             node.add_features(lineage=new_lin)
-            # print(node.lineage)
+
+        node.add_features(_pass=True)
     return t
 
 
 # Functions to find avg dist from leaves to a nodes parent (for calculation of RED)
 class Dist(object):
     @staticmethod
-    def avg_dist_to_this_nodes_parent(node):
+    def avg_dist_to_this_node(node):
         """
         get avg distance from leaves to this node's parent
         """
-        return Dist.avg(Dist.get_list_distances_of_this_nodes_leaves_to_nodes_parent(node))
+        return Dist.avg(Dist.get_list_distances_of_this_nodes_leaves_to_node(node))
 
     @staticmethod
     def avg(l: List[float]):
         """
         averages list of numbers
         """
-        return sum(l)/len(l)
+        if len(l) == 0:
+            return None
+        else:
+            return sum(l)/len(l)
 
     @staticmethod
-    def get_list_distances_of_this_nodes_leaves_to_nodes_parent(node):
+    def get_list_distances_of_this_nodes_leaves_to_node(node):
         """
         from this node, get list of distances from child leaves
         """
-        l = []
-        parent_node = node.up
+        distances = []
+
         for n in node.get_leaves():
-            l.append(n.get_distance(parent_node))
-        return l
+            if n._pass:
+                distances.append(n.get_distance(node))
+        return distances
 
 
 # Functions for getting LCA from leaf node info
@@ -110,24 +121,17 @@ class LCA(object):
 
     @staticmethod
     def assign_pass(t, keyword_parameters):
-        for node in t.traverse():
-            node.add_features(_pass=True)
         for leaf in t:
             if 'remove_strings' in keyword_parameters:
-                if 'r0leaves' in keyword_parameters['remove_strings']:
-                    if LCA.lineage_length(leaf.lineage) == 0:
-                        leaf.add_features(_pass=False)
-                if 'r1leaves' in keyword_parameters['remove_strings']:
-                    if LCA.lineage_length(leaf.lineage) == 1:
+                for word in keyword_parameters['remove_strings']:
+                    if leaf in LCA.list_leaves_at_rank(t, word, 10):
                         leaf.add_features(_pass=False)
                         print("removed = " + str(leaf.lineage))
             if "min_lin_depth" in keyword_parameters and keyword_parameters["min_lin_depth"] > 0:
                 min_lin_depth = keyword_parameters["min_lin_depth"]
-                if LCA.lineage_length(leaf.lineage) <= min_lin_depth:
-                    for word in keyword_parameters['remove_strings']:
-                        if leaf in LCA.list_leaves_at_rank(t, word, min_lin_depth):
-                            leaf.add_features(_pass=False)
-                            print("removed = " + str(leaf.lineage))
+                if LCA.lineage_length(leaf.lineage) < min_lin_depth:
+                        leaf.add_features(_pass=False)
+                        print("removed = " + str(leaf.lineage))
         return 0
 
     @staticmethod
@@ -161,7 +165,7 @@ class LCA(object):
         """
         assesses rank [1:8] where 1 is the domain/kingdom, 2 is the phylum... 7 being species
         """
-        if lineage_list is None or lineage_list == [] or lineage_list == 'None':  # Is the last condition necessary?
+        if lineage_list is None:
             return 0
         else:
             d = 0
@@ -171,11 +175,13 @@ class LCA(object):
             return d
 
     @staticmethod
-    def get_commons_from_mult_lists(l):
+    def get_commons_from_mult_lists(l: list):
         """
         returns a list of common elements from multiple strings
         """
-        if l != [] or l is None:
+        if l is None:
+            return []
+        elif type(l) is list and len(l) > 0:
             c = l[0]
             for num in range(1, (len(l))):
                 c = LCA.get_commons_from_2_list(c, l[num])
@@ -203,7 +209,6 @@ class RED(object):
         for node in t.iter_descendants('preorder'):
             if not node.is_leaf():
                 RED.label_red(node)
-                # print(node, node.red)
             elif node.is_leaf():
                 node.add_features(red=1)
         return t
@@ -216,8 +221,17 @@ class RED(object):
     @staticmethod
     def get_red(node):
         """gets the RED value associated with this node given parent has RED value"""
-        red = node.up.red + (node.get_distance(node.up)/Dist.avg_dist_to_this_nodes_parent(node))*(1 - node.up.red)
-        return red
+        if Dist.avg_dist_to_this_node(node) is None:
+            return None
+        else:
+            a = node.get_distance(node.up)
+            b = Dist.avg_dist_to_this_node(node)
+            x = node.up.red
+            if a + b != 0:
+                red = x + (a/(a + b))*(1 - x)
+            else:
+                red = x
+            return red
 
     @staticmethod
     def avg_red(t, rank):
@@ -286,17 +300,199 @@ class Map(object):
                     node.add_features(lineage=new_lin)
                     Map.label_nodes(t)
 
+# Removing Outliers Per Rank
+RedRank = namedtuple('RedRank', 'red rank')
 
-# Graphing red vs rank
-def graph_red_vs_rank(t):
-    """returns red vs rank graphic with median values at each rank and the correlation coefficient"""
+def cull_outliers(data: list, dev=3):
+    """
+    Returns the Interquartile Range (IQR) of a list after filtering outliers
+    based on log transformed data where outliers are farther than 1 std-dev from the median and
+    an un-transformed distribution where outliers are farther than `dev` standard deviations from the median.
+
+    :param data: A list of floats
+    :param dev: Number of acceptable deviations from the median; beyond this, values are outliers and removed
+    :return: A smaller list of floats
+    """
+    # Reject outliers from ln-transformed distribution
+    ln_a = np.log10(1.0 * np.array(data))
+    noo_a = np.power(10, ln_a[abs(ln_a - np.median(ln_a)) < 2 * np.std(ln_a)])
+
+    # Reject outliers from untransformed distribution
+    d = np.abs(noo_a - np.median(noo_a))
+    mdev = np.median(d)
+    s = d / mdev if mdev else 0
+    noo_a = noo_a[s < dev]
+    try:
+        if isinstance(noo_a[0], np.ndarray):
+            return list(noo_a[0])
+        else:
+            return list(noo_a)
+    except IndexError:
+        return []
+
+
+def list_nodes_of_rank(t, rank):
+    """
+    Generates a list of nodes of a given rank integer.
+
+    :param t: tree
+    :param rank: integer, range[1:7]
+    :return: list
+    """
+    nodes_of_rank = []
+    for node in t.iter_descendants():
+        if node.rank == rank:
+            nodes_of_rank.append(node)
+    return nodes_of_rank
+
+
+def dict_of_nodes_of_rank(t, rank):
+    """
+    Generates dictionary of nodes included in a rank integer. RED values and Ranks
+    become the value of their respective key (node) in namedtuple format: RedRank(RED, rank).
+    :param t: tree
+    :param rank: int
+    :return: dictionary
+    """
+    nodes_of_rank = list_nodes_of_rank(t, rank)
+    dict = {}
+    for node in nodes_of_rank:
+        if node.red is not None:
+            if node.red < 1:
+                if node.rank is not None:
+                    RR = RedRank(node.red, node.rank)
+                    dict[node] = RR
+    return dict
+
+
+def list_inliers_outliers(nodes: dict):
+    """
+    Returns dictionaries of inlier nodes, lower outlier nodes, upper outlier nodes from
+    a dictionary of nodes (here we use the inputs as dictionaries of nodes from a single rank)
+
+    :param nodes: dictionary
+    :return: three dictionaries
+    """
+    reds = []
+    for RR in nodes.values():
+        reds.append(RR.red)
+    noo_a = cull_outliers(reds)
+    median = np.median(noo_a)
+
+    inliers = {}
+    low_outliers = {}
+    high_outliers = {}
+    for node in nodes:
+        if nodes[node].red in noo_a:
+            inliers[node] = RedRank(node.red, node.rank)
+        else:
+            if nodes[node].red < median:
+                low_outliers[node] = RedRank(node.red, node.rank)
+            elif nodes[node].red > median:
+                high_outliers[node] = RedRank(node.red, node.rank)
+
+    return inliers, low_outliers, high_outliers
+
+
+def get_full_inliers_and_outliers(t, r1, r2):
+    """
+    Returns two dictionaries of nodes that are either inliers or outliers relative to the
+    red values of nodes in the same rank.
+
+    :param t: tree
+    :param r1: int, bottom rank range to include
+    :param r2: int, upper rank range to include
+    :return: two dictionaries of nodes as keys, RedRank(red, rank) as values
+    """
+    full_outliers = {}
+    full_inliers = {}
+    for num in range(r1, r2+1):
+        rank_dict = dict_of_nodes_of_rank(t, num)
+        inliers, low_outliers, high_outliers = list_inliers_outliers(rank_dict)
+        for node in low_outliers:
+            full_outliers[node] = RedRank(node.red, node.rank)
+        for node in high_outliers:
+            full_outliers[node] = RedRank(node.red, node.rank)
+        for node in inliers:
+            full_inliers[node] = RedRank(node.red, node.rank)
+    return full_inliers, full_outliers
+
+
+# Graphing Model
+def model_graph(t, model_type):
+    """
+    Graphically fits a model using the ML to processed dataset of a tree. Model types include
+    linear (linear regression), logistic (logistic regression), and forest (randome forest
+    classifier).
+
+    :param t: tree
+    :param model_type: str
+    :return: matplotlib graph
+    """
+    inliers, outliers = get_full_inliers_and_outliers(t, 1, 7)
     reds = []
     ranks = []
-    for node in t.iter_descendants():
-        if node.red < 1:
-            if node.rank is not None:
-                reds.append(node.red)
-                ranks.append(node.rank)
+    for node in inliers:
+        reds.append(inliers[node].red)
+        ranks.append(inliers[node].rank)
+    x_train, x_test, y_train, y_test = train_test_split(np.array(reds).reshape(-1, 1), ranks, test_size=0.25)
+
+    if model_type == 'random_forest':
+        model = RandomForestClassifier(class_weight='balanced', min_weight_fraction_leaf=0.25, n_estimators=100)
+        fit = model.fit(x_train, y_train)
+        model.score(x_test, y_test)
+        score = model.score(x_test, y_test)
+        lex = []
+        ley = []
+        for num in range(0, 100):
+            lex.append(num / 100)
+            ley.append(fit.predict(np.array(num / 100).reshape(-1, 1))[0])
+        plt.plot(lex, ley, 'b-')
+        print('model score = ' + str(score))
+
+    elif model_type == 'linear':
+        model = LinearRegression()
+        fit = model.fit(x_train, y_train)
+        model.score(x_test, y_test)
+        score = model.score(x_test, y_test)
+        lex = []
+        ley = []
+        for num in range(0, 100):
+            lex.append(num / 100)
+            ley.append(fit.predict(np.array(num / 100).reshape(-1, 1))[0])
+        plt.plot(lex, ley, 'b-')
+        print('model score = ' + str(score))
+
+    elif model_type == 'logistic':
+        model = LogisticRegression(multi_class='multinomial', solver='lbfgs', class_weight='balanced')
+        fit = model.fit(x_train, y_train)
+        model.score(x_test, y_test)
+        score = model.score(x_test, y_test)
+        lex = []
+        ley = []
+        for num in range(0, 100):
+            lex.append(num / 100)
+            ley.append(fit.predict(np.array(num / 100).reshape(-1, 1))[0])
+        plt.plot(lex, ley, 'b-')
+        print('model score = ' + str(score))
+    else:
+        print("ERROR: Unknown model type '" + str(model_type) + "'.")
+        sys.exit(3)
+    model_score = str(score)
+    plt.text(x=0.1, y=6.5, s=0, text='model score = ' + model_score)
+    return plt.show()
+
+
+# Graphing red vs rank
+def graph_red_vs_rank(t, model_type):
+    """returns red vs rank graphic with median values at each rank and the correlation coefficient"""
+    inliers, outliers = get_full_inliers_and_outliers(t, 1, 7)
+    reds = []
+    ranks = []
+    for node in inliers:
+        reds.append(inliers[node].red)
+        ranks.append(inliers[node].rank)
+
     plt.xlabel('RED')
     plt.ylabel('Rank')
     plt.title('RED Assignment')
@@ -310,8 +506,7 @@ def graph_red_vs_rank(t):
             plt.plot(median, num, 'g^')
             plt.text(x=median-0.05, y=num+0.4, s=0, text=str(round(median, 4)))
     plt.grid(True)
-    corrcoef = str(round(np.corrcoef(reds, ranks)[1, 0], 4))
-    plt.text(x=0.1, y=6.5, s=0, text='corrcoef = ' + corrcoef)
+    model_graph(t, model_type)
     return plt.show()
 
 
@@ -323,6 +518,11 @@ def get_arguments():
     parser.add_argument('-t', '--tree',
                         type=str, metavar='tree.txt', required=True,
                         help="Tree file of interest, in Newick format")
+
+    parser.add_argument('-m', '--model',
+                        type=str, metavar='', required=False, default="linear",
+                        choices=["linear", "logistic", "random_forest"],
+                        help="Model to fit to the RED distances across taxonomic ranks [ DEFAULT = linear ]")
     parser.add_argument('-r', '--remove',
                         type=str, metavar='', required=False, nargs='+', default="",
                         help="Remove lineages containing specific strings "
@@ -338,9 +538,9 @@ def get_arguments():
 if __name__ == '__main__':
     args = get_arguments()
     t = open_tree_file(args.tax_ids, args.tree)
-    RED.apply_all(t)
     Map.class_all_nodes(t,
                         min_lin_depth=args.lineage_len,
                         remove_strings=args.remove)
+    RED.apply_all(t)
     Map.label_nodes(t)
-    graph_red_vs_rank(t)
+    graph_red_vs_rank(t, args.model)
