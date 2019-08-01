@@ -13,7 +13,6 @@ from sklearn.linear_model import LogisticRegression, LinearRegression
 from sklearn.ensemble import RandomForestClassifier
 
 
-
 def clean_lineage_string(lineage: str):
     """
     Removes superfluous taxonomic ranks and characters that make lineage comparisons difficult
@@ -72,8 +71,8 @@ def open_tree_file(taxa_table_file: str, newick_file: str):
         if node.is_leaf() and 'cellular organisms' not in node.lineage:
             new_lin = ['cellular organisms'] + node.lineage
             node.add_features(lineage=new_lin)
-
         node.add_features(_pass=True)
+
     return t
 
 
@@ -102,7 +101,6 @@ class Dist(object):
         from this node, get list of distances from child leaves
         """
         distances = []
-
         for n in node.get_leaves():
             if n._pass:
                 distances.append(n.get_distance(node))
@@ -211,6 +209,9 @@ class RED(object):
                 RED.label_red(node)
             elif node.is_leaf():
                 node.add_features(red=1)
+        for leaf in t:
+            if LCA.lineage_length(leaf.lineage) >= 7:
+                leaf.add_features(red=0.9999)
         return t
 
     @staticmethod
@@ -331,6 +332,9 @@ def cull_outliers(data: list, dev=3):
         return []
 
 
+
+
+
 def list_nodes_of_rank(t, rank):
     """
     Generates a list of nodes of a given rank integer.
@@ -422,7 +426,7 @@ def get_full_inliers_and_outliers(t, r1, r2):
 def model_graph(t, model_type):
     """
     Graphically fits a model using the ML to processed dataset of a tree. Model types include
-    linear (linear regression), logistic (logistic regression), and forest (randome forest
+    linear (linear regression), logistic (logistic regression), and forest (random forest
     classifier).
 
     :param t: tree
@@ -435,7 +439,7 @@ def model_graph(t, model_type):
     for node in inliers:
         reds.append(inliers[node].red)
         ranks.append(inliers[node].rank)
-    x_train, x_test, y_train, y_test = train_test_split(np.array(reds).reshape(-1, 1), ranks, test_size=0.25)
+    x_train, x_test, y_train, y_test = train_test_split(np.array(reds).reshape(-1, 1), ranks, test_size=0.2, random_state=0)
 
     if model_type == 'random_forest':
         model = RandomForestClassifier(class_weight='balanced', min_weight_fraction_leaf=0.25, n_estimators=100)
@@ -492,7 +496,6 @@ def graph_red_vs_rank(t, model_type):
     for node in inliers:
         reds.append(inliers[node].red)
         ranks.append(inliers[node].rank)
-
     plt.xlabel('RED')
     plt.ylabel('Rank')
     plt.title('RED Assignment')
@@ -518,7 +521,6 @@ def get_arguments():
     parser.add_argument('-t', '--tree',
                         type=str, metavar='tree.txt', required=True,
                         help="Tree file of interest, in Newick format")
-
     parser.add_argument('-m', '--model',
                         type=str, metavar='', required=False, default="linear",
                         choices=["linear", "logistic", "random_forest"],
