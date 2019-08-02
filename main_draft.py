@@ -423,7 +423,18 @@ def get_full_inliers_and_outliers(t, r1, r2):
     return full_inliers, full_outliers
 
 
-# Graphing Model
+def plot_fit(model, x_train, x_test, y_train, y_test):
+    fit = model.fit(x_train, y_train)
+    model.score(x_test, y_test)
+    lex = []
+    ley = []
+    for num in range(0, 100):
+        lex.append(num / 100)
+        ley.append(fit.predict(np.array(num / 100).reshape(-1, 1))[0])
+    plt.plot(lex, ley, 'b-')
+    return
+
+
 def model_graph(t, model_type):
     """
     Graphically fits a model using the ML to processed dataset of a tree. Model types include
@@ -445,43 +456,16 @@ def model_graph(t, model_type):
 
     if model_type == 'random_forest':
         model = RandomForestClassifier(class_weight='balanced', min_weight_fraction_leaf=0.25, n_estimators=100)
-        fit = model.fit(x_train, y_train)
-        model.score(x_test, y_test)
-        score = model.score(x_test, y_test)
-        lex = []
-        ley = []
-        for num in range(0, 100):
-            lex.append(num / 100)
-            ley.append(fit.predict(np.array(num / 100).reshape(-1, 1))[0])
-        plt.plot(lex, ley, 'b-')
-
     elif model_type == 'linear':
         model = LinearRegression()
-        fit = model.fit(x_train, y_train)
-        model.score(x_test, y_test)
-        score = model.score(x_test, y_test)
-        lex = []
-        ley = []
-        for num in range(0, 100):
-            lex.append(num / 100)
-            ley.append(fit.predict(np.array(num / 100).reshape(-1, 1))[0])
-        plt.plot(lex, ley, 'b-')
-
     elif model_type == 'logistic':
         model = LogisticRegression(multi_class='multinomial', solver='lbfgs', class_weight='balanced')
-        fit = model.fit(x_train, y_train)
-        model.score(x_test, y_test)
-        score = model.score(x_test, y_test)
-        lex = []
-        ley = []
-        for num in range(0, 100):
-            lex.append(num / 100)
-            ley.append(fit.predict(np.array(num / 100).reshape(-1, 1))[0])
-        plt.plot(lex, ley, 'b-')
-        logging.info('model score = ' + str(score) + "\n")
     else:
         logging.error("Unknown model type '" + str(model_type) + "'.\n")
         sys.exit(3)
+
+    plot_fit(model, x_train, x_test, y_train, y_test)
+    score = model.score(x_test, y_test)
     model_score = str(score)
     logging.info("Model score = " + model_score + "\n")
     plt.text(x=0.1, y=6.5, s=0, text='model score = ' + model_score)
