@@ -4,6 +4,8 @@ import argparse
 import statistics as stat
 import re
 import sys
+import os
+import logging
 
 from ete3 import Tree
 from typing import List
@@ -11,6 +13,9 @@ from collections import namedtuple
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LogisticRegression, LinearRegression
 from sklearn.ensemble import RandomForestClassifier
+
+# Removing Outliers Per Rank
+RED_RANK = namedtuple('RedRank', 'red rank')
 
 
 def clean_lineage_string(lineage: str):
@@ -124,12 +129,12 @@ class LCA(object):
                 for word in keyword_parameters['remove_strings']:
                     if leaf in LCA.list_leaves_at_rank(t, word, 10):
                         leaf.add_features(_pass=False)
-                        print("removed = " + str(leaf.lineage))
+                        logging.debug("removed = " + str(leaf.lineage) + "\n")
             if "min_lin_depth" in keyword_parameters and keyword_parameters["min_lin_depth"] > 0:
                 min_lin_depth = keyword_parameters["min_lin_depth"]
                 if LCA.lineage_length(leaf.lineage) < min_lin_depth:
                         leaf.add_features(_pass=False)
-                        print("removed = " + str(leaf.lineage))
+                        logging.debug("removed = " + str(leaf.lineage) + "\n")
         return 0
 
     @staticmethod
@@ -257,8 +262,9 @@ class RED(object):
                 if node.red < 1:
                     if node.rank is not None:
                         l.append(node.red)
-        if l == []:
-            print(0)
+        if not l:
+            logging.debug("No descendants of node '" + str(t.name) + "'.\n")
+            return 0
         else:
             return stat.median(l)
 
@@ -275,7 +281,7 @@ class Map(object):
         """
         for node in t.traverse():
             try:
-                if not node.lineage is None:
+                if node.lineage:
                     node.add_features(rank=LCA.lineage_length(node.lineage))
                 else:
                     node.add_features(rank=None)
@@ -289,7 +295,7 @@ class Map(object):
         LCA from leaf node info
         """
         kwargs_dict = kwargs
-        print(kwargs_dict)
+        logging.info("\n".join([str(k) + " = '" + str(v) + "'" for k, v in kwargs_dict.items()]) + "\n")
         LCA.assign_pass(t, kwargs_dict)
         Map.label_nodes(t)
         for node in reversed(list(t.traverse('levelorder'))):
@@ -301,8 +307,6 @@ class Map(object):
                     node.add_features(lineage=new_lin)
                     Map.label_nodes(t)
 
-# Removing Outliers Per Rank
-RedRank = namedtuple('RedRank', 'red rank')
 
 def cull_outliers(data: list, dev=3):
     """
@@ -332,9 +336,6 @@ def cull_outliers(data: list, dev=3):
         return []
 
 
-
-
-
 def list_nodes_of_rank(t, rank):
     """
     Generates a list of nodes of a given rank integer.
@@ -350,10 +351,10 @@ def list_nodes_of_rank(t, rank):
     return nodes_of_rank
 
 
-def dict_of_nodes_of_rank(t, rank):
+def dict_of_nodes_of_rank(t: Tree, rank):
     """
     Generates dictionary of nodes included in a rank integer. RED values and Ranks
-    become the value of their respective key (node) in namedtuple format: RedRank(RED, rank).
+    become the value of their respective key (node) in namedtuple format: RED_RANK(RED, rank).
     :param t: tree
     :param rank: int
     :return: dictionary
@@ -364,7 +365,7 @@ def dict_of_nodes_of_rank(t, rank):
         if node.red is not None:
             if node.red < 1:
                 if node.rank is not None:
-                    RR = RedRank(node.red, node.rank)
+                    RR = RED_RANK(node.red, node.rank)
                     dict[node] = RR
     return dict
 
@@ -388,12 +389,12 @@ def list_inliers_outliers(nodes: dict):
     high_outliers = {}
     for node in nodes:
         if nodes[node].red in noo_a:
-            inliers[node] = RedRank(node.red, node.rank)
+            inliers[node] = RED_RANK(node.red, node.rank)
         else:
             if nodes[node].red < median:
-                low_outliers[node] = RedRank(node.red, node.rank)
+                low_outliers[node] = RED_RANK(node.red, node.rank)
             elif nodes[node].red > median:
-                high_outliers[node] = RedRank(node.red, node.rank)
+                high_outliers[node] = RED_RANK(node.red, node.rank)
 
     return inliers, low_outliers, high_outliers
 
@@ -406,7 +407,7 @@ def get_full_inliers_and_outliers(t, r1, r2):
     :param t: tree
     :param r1: int, bottom rank range to include
     :param r2: int, upper rank range to include
-    :return: two dictionaries of nodes as keys, RedRank(red, rank) as values
+    :return: two dictionaries of nodes as keys, RED_RANK(red, rank) as values
     """
     full_outliers = {}
     full_inliers = {}
@@ -414,11 +415,11 @@ def get_full_inliers_and_outliers(t, r1, r2):
         rank_dict = dict_of_nodes_of_rank(t, num)
         inliers, low_outliers, high_outliers = list_inliers_outliers(rank_dict)
         for node in low_outliers:
-            full_outliers[node] = RedRank(node.red, node.rank)
+            full_outliers[node] = RED_RANK(node.red, node.rank)
         for node in high_outliers:
-            full_outliers[node] = RedRank(node.red, node.rank)
+            full_outliers[node] = RED_RANK(node.red, node.rank)
         for node in inliers:
-            full_inliers[node] = RedRank(node.red, node.rank)
+            full_inliers[node] = RED_RANK(node.red, node.rank)
     return full_inliers, full_outliers
 
 
@@ -439,7 +440,8 @@ def model_graph(t, model_type):
     for node in inliers:
         reds.append(inliers[node].red)
         ranks.append(inliers[node].rank)
-    x_train, x_test, y_train, y_test = train_test_split(np.array(reds).reshape(-1, 1), ranks, test_size=0.2, random_state=0)
+    x_train, x_test, y_train, y_test = train_test_split(np.array(reds).reshape(-1, 1), ranks,
+                                                        test_size=0.2, random_state=0)
 
     if model_type == 'random_forest':
         model = RandomForestClassifier(class_weight='balanced', min_weight_fraction_leaf=0.25, n_estimators=100)
@@ -452,7 +454,6 @@ def model_graph(t, model_type):
             lex.append(num / 100)
             ley.append(fit.predict(np.array(num / 100).reshape(-1, 1))[0])
         plt.plot(lex, ley, 'b-')
-        print('model score = ' + str(score))
 
     elif model_type == 'linear':
         model = LinearRegression()
@@ -465,7 +466,6 @@ def model_graph(t, model_type):
             lex.append(num / 100)
             ley.append(fit.predict(np.array(num / 100).reshape(-1, 1))[0])
         plt.plot(lex, ley, 'b-')
-        print('model score = ' + str(score))
 
     elif model_type == 'logistic':
         model = LogisticRegression(multi_class='multinomial', solver='lbfgs', class_weight='balanced')
@@ -478,11 +478,12 @@ def model_graph(t, model_type):
             lex.append(num / 100)
             ley.append(fit.predict(np.array(num / 100).reshape(-1, 1))[0])
         plt.plot(lex, ley, 'b-')
-        print('model score = ' + str(score))
+        logging.info('model score = ' + str(score) + "\n")
     else:
-        print("ERROR: Unknown model type '" + str(model_type) + "'.")
+        logging.error("Unknown model type '" + str(model_type) + "'.\n")
         sys.exit(3)
     model_score = str(score)
+    logging.info("Model score = " + model_score + "\n")
     plt.text(x=0.1, y=6.5, s=0, text='model score = ' + model_score)
     return plt.show()
 
@@ -537,12 +538,99 @@ def get_arguments():
     return args
 
 
+class MyFormatter(logging.Formatter):
+
+    error_fmt = "%(levelname)s - %(module)s, line %(lineno)d:\n%(message)s"
+    warning_fmt = "%(levelname)s:\n%(message)s"
+    debug_fmt = "%(asctime)s\n%(message)s"
+    info_fmt = "%(message)s"
+
+    def __init__(self):
+        super().__init__(fmt="%(levelname)s: %(message)s",
+                         datefmt="%d/%m %H:%M:%S")
+
+    def format(self, record):
+
+        # Save the original format configured by the user
+        # when the logger formatter was instantiated
+        format_orig = self._style._fmt
+
+        # Replace the original format with one customized by logging level
+        if record.levelno == logging.DEBUG:
+            self._style._fmt = MyFormatter.debug_fmt
+
+        elif record.levelno == logging.INFO:
+            self._style._fmt = MyFormatter.info_fmt
+
+        elif record.levelno == logging.ERROR:
+            self._style._fmt = MyFormatter.error_fmt
+
+        elif record.levelno == logging.WARNING:
+            self._style._fmt = MyFormatter.warning_fmt
+
+        # Call the original formatter class to do the grunt work
+        result = logging.Formatter.format(self, record)
+
+        # Restore the original format configured by the user
+        self._style._fmt = format_orig
+
+        return result
+
+
+def prep_logging(log_file_name=None, verbosity=False):
+    """
+    Allows for multiple file handlers to be added to the root logger, but only a single stream handler.
+    The new file handlers must be removed outside of this function explicitly
+    :param log_file_name:
+    :param verbosity:
+    :return:
+    """
+    if verbosity:
+        logging_level = logging.DEBUG
+    else:
+        logging_level = logging.INFO
+
+    # Detect whether a handlers are already present and return if true
+    logger = logging.getLogger()
+    if len(logger.handlers):
+        return
+
+    formatter = MyFormatter()
+    # Set the console handler normally writing to stdout/stderr
+    ch = logging.StreamHandler()
+    ch.setLevel(logging_level)
+    ch.terminator = ''
+    ch.setFormatter(formatter)
+
+    if log_file_name:
+        output_dir = os.path.dirname(log_file_name)
+        try:
+            if output_dir and not os.path.isdir(output_dir):
+                os.makedirs(output_dir)
+        except (IOError, OSError):
+            sys.stderr.write("ERROR: Unable to make directory '" + output_dir + "'.\n")
+            sys.exit(3)
+        logging.basicConfig(level=logging.DEBUG,
+                            filename=log_file_name,
+                            filemode='w',
+                            datefmt="%d/%m %H:%M:%S",
+                            format="%(asctime)s %(levelname)s:\n%(message)s")
+        logging.getLogger('').addHandler(ch)
+        logging.getLogger('').propagate = False
+    else:
+        logging.basicConfig(level=logging_level,
+                            datefmt="%d/%m %H:%M:%S",
+                            format="%(asctime)s %(levelname)s:\n%(message)s")
+    return
+
+
 if __name__ == '__main__':
     args = get_arguments()
-    t = open_tree_file(args.tax_ids, args.tree)
-    Map.class_all_nodes(t,
+    prep_logging("./RedAssignment_log.txt")
+    ref_tree = open_tree_file(args.tax_ids, args.tree)
+    Map.class_all_nodes(ref_tree,
                         min_lin_depth=args.lineage_len,
                         remove_strings=args.remove)
-    RED.apply_all(t)
-    Map.label_nodes(t)
-    graph_red_vs_rank(t, args.model)
+    RED.apply_all(ref_tree)
+    Map.label_nodes(ref_tree)
+    graph_red_vs_rank(ref_tree, args.model)
