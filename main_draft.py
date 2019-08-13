@@ -423,6 +423,36 @@ def get_full_inliers_and_outliers(t, r1, r2):
     return full_inliers, full_outliers
 
 
+def shift_down_rank(some_dict):
+    """
+    Shifts ranks down for low-inliers
+    :param t:
+    :param r1:
+    :param r2:
+    :return:
+    """
+    for node in some_dict:
+        if node.up.rank is not None:
+            if node.up.rank == node.rank:
+                return 0
+            elif node.lineage is None:
+                return 0
+            else:
+                new_rank = node.rank - 1
+                lin = node.lineage
+                lin.remove(lin[-1])
+                node.add_features(rank=new_rank)
+                node.add_features(lineage=lin)
+
+
+def move_low_outliers(t, r1, r2):
+    for num in range(r1, r2+1):
+        rank_dict = dict_of_nodes_of_rank(t, num)
+        inliers, low_outliers, high_outliers = list_inliers_outliers(rank_dict)
+        shift_down_rank(low_outliers)
+
+
+
 def plot_fit(model, x_train, x_test, y_train, y_test):
     fit = model.fit(x_train, y_train)
     model.score(x_test, y_test)
@@ -617,4 +647,5 @@ if __name__ == '__main__':
                         remove_strings=args.remove)
     RED.apply_all(ref_tree)
     Map.label_nodes(ref_tree)
+    move_low_outliers(ref_tree, 1, 7)
     graph_red_vs_rank(ref_tree, args.model)
