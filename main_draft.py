@@ -461,7 +461,7 @@ def plot_fit(model, x_train, x_test, y_train, y_test):
     for num in range(0, 100):
         lex.append(num / 100)
         ley.append(fit.predict(np.array(num / 100).reshape(-1, 1))[0])
-    plt.plot(lex, ley, 'b-')
+    plt.plot(lex, ley, 'k-')
     return
 
 
@@ -482,10 +482,10 @@ def model_graph(t, model_type):
         reds.append(inliers[node].red)
         ranks.append(inliers[node].rank)
     x_train, x_test, y_train, y_test = train_test_split(np.array(reds).reshape(-1, 1), ranks,
-                                                        test_size=0.2, random_state=0)
+                                                        test_size=0.25, random_state=0)
 
     if model_type == 'random_forest':
-        model = RandomForestClassifier(class_weight='balanced', min_weight_fraction_leaf=0.25, n_estimators=100)
+        model = RandomForestClassifier(class_weight='balanced', min_weight_fraction_leaf=0.1, n_estimators=1000)
     elif model_type == 'linear':
         model = LinearRegression()
     elif model_type == 'logistic':
@@ -513,7 +513,6 @@ def graph_red_vs_rank(t, model_type):
         ranks.append(inliers[node].rank)
     plt.xlabel('RED')
     plt.ylabel('Rank')
-    plt.title('RED Assignment')
     plt.plot(reds, ranks, 'ro')
     plt.axis([0, 1, 0, 8])
     for num in range(0, 8):
